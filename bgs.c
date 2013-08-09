@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
 #include <Imlib2.h>
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
@@ -34,6 +35,7 @@ static int sx, sy, sw, sh;	/* geometry of the screen */
 static Bool center  = False;	/* center image instead of rescale */
 static Bool running = False;
 static Display *dpy;
+static int screen;
 static Window root;
 static Visual *vis;
 static Colormap cm;
@@ -58,6 +60,55 @@ die(const char *errstr) {
 	fputs(errstr, stderr);
 	exit(EXIT_FAILURE);
 }
+
+// Stolen from hsetroot, there: Adapted from fluxbox' bsetroot, there: adapted from wmsetbg
+int
+setRootAtoms (Pixmap pixmap)
+{
+  Atom atom_root, atom_eroot, type;
+  unsigned char *data_root, *data_eroot;
+  int format;
+  unsigned long length, after;
+
+  atom_root = XInternAtom (dpy, "_XROOTMAP_ID", True);
+  atom_eroot = XInternAtom (dpy, "ESETROOT_PMAP_ID", True);
+
+  // doing this to clean up after old background
+  if (atom_root != None && atom_eroot != None)
+    {
+      XGetWindowProperty (dpy, RootWindow (dpy, screen),
+                    atom_root, 0L, 1L, False, AnyPropertyType,
+                    &type, &format, &length, &after, &data_root);
+      if (type == XA_PIXMAP)
+      {
+        XGetWindowProperty (dpy, RootWindow (dpy, screen),
+                        atom_eroot, 0L, 1L, False, AnyPropertyType,
+                        &type, &format, &length, &after, &data_eroot);
+        if (data_root && data_eroot && type == XA_PIXMAP &&
+            *((Pixmap *) data_root) == *((Pixmap *) data_eroot))
+          {
+            XKillClient (dpy, *((Pixmap *) data_root));
+          }
+      }
+    }
+
+  atom_root = XInternAtom (dpy, "_XROOTPMAP_ID", False);
+  atom_eroot = XInternAtom (dpy, "ESETROOT_PMAP_ID", False);
+
+  if (atom_root == None || atom_eroot == None)
+    return 0;
+
+  // setting new background atoms
+  XChangeProperty (dpy, RootWindow (dpy, screen),
+               atom_root, XA_PIXMAP, 32, PropModeReplace,
+               (unsigned char *) &pixmap, 1);
+  XChangeProperty (dpy, RootWindow (dpy, screen), atom_eroot,
+               XA_PIXMAP, 32, PropModeReplace, (unsigned char *) &pixmap,
+               1);
+
+  return 1;
+}
+
 
 void
 drawbg(void) {
@@ -106,6 +157,10 @@ drawbg(void) {
 		imlib_context_set_image(tmpimg);
 		imlib_free_image();
 	}
+
+	if (setRootAtoms (pm) == 0)
+		fprintf (stderr, "Couldn't create atoms...\n");
+
 	imlib_context_set_blend(0);
 	imlib_context_set_image(buffer);
 	imlib_context_set_drawable(root);
@@ -140,7 +195,7 @@ run(void) {
 
 void
 setup(char *paths[], int c) {
-	int i, screen;
+	int i;
 
 	/* Loading images */
 	for(nimage = i = 0; i < c && i < LENGTH(images); i++) {
